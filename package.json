@@ -10,12 +10,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/zxccvvb"
+    "url": "https://github.com/zxccvvb/Ranta.git"
   },
   "engines": {
     "vscode": "^1.74.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onLanguage:vue",
     "onLanguage:json"
@@ -39,7 +41,8 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "vsix": "npm version patch --no-git-tag-version --no-git-checks && npx @vscode/vsce package"
   },
   "devDependencies": {
     "@types/node": "^16.18.0",
