@@ -2,8 +2,9 @@
   "name": "ranta",
   "displayName": "Ranta",
   "description": "Tee / Ranta：extension.json（data / process / lambda / event / widget / component）与 Vue 模板、data 访问之间的跳转。",
-  "version": "1.0.0",
-  "publisher": "youzan",
+  "version": "1.0.1",
+  "icon": "images/icon.png",
+  "publisher": "9y",
   "author": {
     "name": "九月",
     "url": "https://github.com/zxccvvb"
