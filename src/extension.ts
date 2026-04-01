@@ -12,6 +12,7 @@ import {
   shouldSkipTag,
   tagToWidgetPascal,
 } from './widgetResolver';
+import { resolveVueOptionsMemberDefinition } from './vueSfcMemberResolve';
 
 async function revealFirstOrPickLocations(
   locs: vscode.Location[],
@@ -77,6 +78,16 @@ async function goToDefinitionAtCursor(
   }
 
   if (document.languageId === 'vue') {
+    const vueMemberLocs = resolveVueOptionsMemberDefinition(document, pos);
+    if (vueMemberLocs?.length) {
+      await vscode.window.showTextDocument(vueMemberLocs[0].uri, {
+        selection: vueMemberLocs[0].range,
+      });
+      return;
+    }
+  }
+
+  if (document.languageId === 'vue') {
     const tag = getVueTagNameAtPosition(document, pos);
     if (tag && !shouldSkipTag(tag)) {
       const widgetPascal = tagToWidgetPascal(tag);
@@ -138,6 +149,13 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       if (runtimeLocs?.length) {
         return runtimeLocs;
+      }
+      const vueMemberLocs = resolveVueOptionsMemberDefinition(
+        document,
+        position
+      );
+      if (vueMemberLocs?.length) {
+        return vueMemberLocs;
       }
       const tag = getVueTagNameAtPosition(document, position);
       if (!tag || shouldSkipTag(tag)) {

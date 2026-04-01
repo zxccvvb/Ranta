@@ -1,0 +1,1 @@
+export { resolveVueOptionsMemberDefinition } from './resolveVueOptionsMember';
