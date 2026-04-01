@@ -252,30 +252,46 @@ export async function resolveExtensionJsonDefinition(
   if (ctx.section === 'event' && ctx.sub === 'emit') {
     const re = eventEmitCallRegex(sym);
     const emitLocs = await searchAllInExtension(extRoot, re);
-    const listenDecls = await findExtensionsDeclaringEventListen(sym, extRoot);
+    const listenDecls = await findExtensionsDeclaringEventListen(sym);
+    const reListen = eventListenCallRegex(sym);
     const jsonLocs: vscode.Location[] = [];
+    const listenCodeLocs: vscode.Location[] = [];
     for (const d of listenDecls) {
-      const jl = await findEventNameInExtensionJson(d.extensionRoot, sym, 'listen');
+      listenCodeLocs.push(
+        ...(await searchAllInExtension(d.extensionRoot, reListen))
+      );
+      const jl = await findEventNameInExtensionJson(
+        d.extensionRoot,
+        sym,
+        'listen'
+      );
       if (jl) {
         jsonLocs.push(...jl);
       }
     }
-    const merged = dedupeLocations([...emitLocs, ...jsonLocs]);
+    const merged = dedupeLocations([...emitLocs, ...listenCodeLocs, ...jsonLocs]);
     return merged.length ? merged : undefined;
   }
 
   if (ctx.section === 'event' && ctx.sub === 'listen') {
-    const re = eventListenCallRegex(sym);
-    const listenLocs = await searchAllInExtension(extRoot, re);
-    const emitDecls = await findExtensionsDeclaringEventEmit(sym, extRoot);
+    const emitDecls = await findExtensionsDeclaringEventEmit(sym);
+    const reEmit = eventEmitCallRegex(sym);
     const jsonLocs: vscode.Location[] = [];
+    const emitCodeLocs: vscode.Location[] = [];
     for (const d of emitDecls) {
-      const jl = await findEventNameInExtensionJson(d.extensionRoot, sym, 'emit');
+      emitCodeLocs.push(
+        ...(await searchAllInExtension(d.extensionRoot, reEmit))
+      );
+      const jl = await findEventNameInExtensionJson(
+        d.extensionRoot,
+        sym,
+        'emit'
+      );
       if (jl) {
         jsonLocs.push(...jl);
       }
     }
-    const merged = dedupeLocations([...listenLocs, ...jsonLocs]);
+    const merged = dedupeLocations([...emitCodeLocs, ...jsonLocs]);
     return merged.length ? merged : undefined;
   }
 
@@ -293,6 +309,47 @@ export async function findEventNameInExtensionJson(
     const buf = await fs.readFile(jsonUri.fsPath, 'utf8');
     const j = JSON.parse(buf) as { event?: { emit?: string[]; listen?: string[] } };
     const arr = sub === 'emit' ? j.event?.emit : j.event?.listen;
+    if (!Array.isArray(arr) || !arr.includes(name)) {
+      return undefined;
+    }
+    const lines = buf.split(/\r?\n/);
+    const keyRe = new RegExp(`"${escapeRegExp(name)}"`);
+    const out: vscode.Location[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (!keyRe.test(lines[i])) {
+        continue;
+      }
+      const col = lines[i].indexOf(`"${name}"`);
+      if (col < 0) {
+        continue;
+      }
+      const range = new vscode.Range(
+        i,
+        col + 1,
+        i,
+        col + 1 + name.length
+      );
+      out.push(new vscode.Location(jsonUri, range));
+    }
+    return out.length ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 在 extension.json 的 process.define / invoke 数组中定位进程名字符串 */
+export async function findProcessNameInExtensionJson(
+  extensionRoot: vscode.Uri,
+  name: string,
+  sub: 'define' | 'invoke'
+): Promise<vscode.Location[] | undefined> {
+  const jsonUri = vscode.Uri.joinPath(extensionRoot, 'extension.json');
+  try {
+    const buf = await fs.readFile(jsonUri.fsPath, 'utf8');
+    const j = JSON.parse(buf) as {
+      process?: { define?: string[]; invoke?: string[] };
+    };
+    const arr = sub === 'define' ? j.process?.define : j.process?.invoke;
     if (!Array.isArray(arr) || !arr.includes(name)) {
       return undefined;
     }
@@ -457,5 +514,144 @@ export async function resolveDataAccessToExtensionJson(
     }
     return findDataKeyInExtensionJson(extRoot, key);
   }
+  return undefined;
+}
+
+function extractQuotedFirstArgAfterMethod(
+  line: string,
+  col: number,
+  method: 'listen' | 'emit'
+): string | undefined {
+  const re = new RegExp(
+    `\\.${method}\\s*\\(\\s*(['"])((?:[^'\\\\]|\\\\.)*)\\1`,
+    'g'
+  );
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    const full = m[0];
+    const inner = m[2];
+    const base = m.index;
+    const quoteInFull = full.indexOf(m[1] + inner);
+    const valueStart = base + quoteInFull + 1;
+    const valueEnd = valueStart + inner.length;
+    if (col >= valueStart && col < valueEnd) {
+      return inner;
+    }
+  }
+  return undefined;
+}
+
+function extractQuotedFirstArgProcessDefine(
+  line: string,
+  col: number
+): string | undefined {
+  const re =
+    /(?:this\.ctx\.process|this\.process|ctx\.process|process)\.define\s*\(\s*(['"])((?:[^'\\]|\\.)*)\1/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    const full = m[0];
+    const inner = m[2];
+    const base = m.index;
+    const quoteInFull = full.indexOf(m[1] + inner);
+    const valueStart = base + quoteInFull + 1;
+    const valueEnd = valueStart + inner.length;
+    if (col >= valueStart && col < valueEnd) {
+      return inner;
+    }
+  }
+  return undefined;
+}
+
+function extractQuotedFirstArgProcessInvoke(
+  line: string,
+  col: number
+): string | undefined {
+  const re =
+    /(?:this\.ctx\.process|this\.process|ctx\.process|process)\.invoke(?:Pipe)?\s*\(\s*(['"])((?:[^'\\]|\\.)*)\1/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    const full = m[0];
+    const inner = m[2];
+    const base = m.index;
+    const quoteInFull = full.indexOf(m[1] + inner);
+    const valueStart = base + quoteInFull + 1;
+    const valueEnd = valueStart + inner.length;
+    if (col >= valueStart && col < valueEnd) {
+      return inner;
+    }
+  }
+  return undefined;
+}
+
+function extractLambdaMemberName(line: string, col: number): string | undefined {
+  const re = /(?:this\.)?ctx\.lambdas\.([a-zA-Z_$][\w$]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    const word = m[1];
+    const start = m.index + m[0].length - word.length;
+    const end = start + word.length;
+    if (col >= start && col < end) {
+      return word;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * 从 extension 内 `.vue` / `.js` / `.ts` 源码跳转到声明：
+ * - `event.listen` / `event.emit` 首参字符串 → 本 extension `extension.json` 的 `event.listen` / `event.emit` 项；
+ * - `process.define` 首参 → `process.define` 列表项；
+ * - `process.invoke` / `invokePipe` 首参 → 与 `extension.json` 的 `process.invoke` 一致，在其它 extension 搜 `process.define`；
+ * - `ctx.lambdas.xxx` 方法名 → 与 `extension.json` 的 `lambda.provide` 一致（static lambdas）。
+ */
+export async function resolveTeeRuntimeCodeToDefinition(
+  document: vscode.TextDocument,
+  position: vscode.Position
+): Promise<vscode.Location[] | undefined> {
+  const line = document.lineAt(position.line).text;
+  const col = position.character;
+
+  const extRoot = await findExtensionRootAsync(document.uri);
+  if (!extRoot) {
+    return undefined;
+  }
+
+  const listenSym = extractQuotedFirstArgAfterMethod(line, col, 'listen');
+  if (listenSym) {
+    const jl = await findEventNameInExtensionJson(
+      extRoot,
+      listenSym,
+      'listen'
+    );
+    return jl?.length ? jl : undefined;
+  }
+
+  const emitSym = extractQuotedFirstArgAfterMethod(line, col, 'emit');
+  if (emitSym) {
+    const jl = await findEventNameInExtensionJson(extRoot, emitSym, 'emit');
+    return jl?.length ? jl : undefined;
+  }
+
+  const defineSym = extractQuotedFirstArgProcessDefine(line, col);
+  if (defineSym) {
+    const jl = await findProcessNameInExtensionJson(
+      extRoot,
+      defineSym,
+      'define'
+    );
+    return jl?.length ? jl : undefined;
+  }
+
+  const invokeSym = extractQuotedFirstArgProcessInvoke(line, col);
+  if (invokeSym) {
+    const locs = await searchProcessDefineExternal(extRoot, invokeSym);
+    return locs.length ? locs : undefined;
+  }
+
+  const lambdaName = extractLambdaMemberName(line, col);
+  if (lambdaName) {
+    return resolveStaticListSymbol('lambda', extRoot, lambdaName);
+  }
+
   return undefined;
 }

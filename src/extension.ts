@@ -4,6 +4,7 @@ import {
   resolveDataAccessToExtensionJson,
   resolveExtensionJsonDefinition,
   resolveMapDataToExtensionJson,
+  resolveTeeRuntimeCodeToDefinition,
 } from './extensionJsonResolve';
 import { resolveTeeWidgetDefinition } from './resolveDefinition';
 import {
@@ -66,6 +67,15 @@ async function goToDefinitionAtCursor(
     }
   }
 
+  const runtimeLocs = await resolveTeeRuntimeCodeToDefinition(document, pos);
+  if (runtimeLocs?.length) {
+    await revealFirstOrPickLocations(
+      runtimeLocs,
+      'Ranta：event / process / lambda 解析到多个匹配，请选择'
+    );
+    return;
+  }
+
   if (document.languageId === 'vue') {
     const tag = getVueTagNameAtPosition(document, pos);
     if (tag && !shouldSkipTag(tag)) {
@@ -122,6 +132,13 @@ export function activate(context: vscode.ExtensionContext): void {
       if (dataLocs?.length) {
         return dataLocs;
       }
+      const runtimeLocs = await resolveTeeRuntimeCodeToDefinition(
+        document,
+        position
+      );
+      if (runtimeLocs?.length) {
+        return runtimeLocs;
+      }
       const tag = getVueTagNameAtPosition(document, position);
       if (!tag || shouldSkipTag(tag)) {
         return [];
@@ -142,6 +159,29 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   });
 
+  const teeExtCodeSelector: vscode.DocumentSelector = [
+    {
+      pattern: '**/extensions/**/*.{js,ts,mjs,cjs}',
+      scheme: 'file',
+    },
+  ];
+
+  const teeExtCodeDef = vscode.languages.registerDefinitionProvider(
+    teeExtCodeSelector,
+    {
+      async provideDefinition(
+        document: vscode.TextDocument,
+        position: vscode.Position
+      ): Promise<vscode.Definition | vscode.LocationLink[]> {
+        const locs = await resolveTeeRuntimeCodeToDefinition(
+          document,
+          position
+        );
+        return locs ?? [];
+      },
+    }
+  );
+
   const cmd = vscode.commands.registerTextEditorCommand(
     'ranta.goToWidget',
     async (editor) => {
@@ -149,7 +189,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
-  context.subscriptions.push(vueDef, jsonDef, cmd);
+  context.subscriptions.push(vueDef, jsonDef, teeExtCodeDef, cmd);
 }
 
 export function deactivate(): void {}

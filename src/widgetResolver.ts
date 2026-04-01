@@ -427,10 +427,10 @@ export async function findExtensionsDefiningProcess(
   return hits;
 }
 
-/** 全局查找在 extension.json 的 event.listen 中声明了某事件名的 extension（不含 exclude） */
+/** 全局查找在 extension.json 的 event.listen 中声明了某事件名的 extension（可选 exclude） */
 export async function findExtensionsDeclaringEventListen(
   eventName: string,
-  excludeExtensionRoot: vscode.Uri
+  excludeExtensionRoot?: vscode.Uri
 ): Promise<GlobalProviderHit[]> {
   const hits: GlobalProviderHit[] = [];
   const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
@@ -456,7 +456,10 @@ export async function findExtensionsDeclaringEventListen(
       }
       const dir = path.dirname(jsonPath);
       const extRoot = vscode.Uri.file(dir);
-      if (extRoot.fsPath === excludeExtensionRoot.fsPath) {
+      if (
+        excludeExtensionRoot &&
+        extRoot.fsPath === excludeExtensionRoot.fsPath
+      ) {
         continue;
       }
       hits.push({
@@ -470,10 +473,10 @@ export async function findExtensionsDeclaringEventListen(
   return hits;
 }
 
-/** 全局查找在 extension.json 的 event.emit 中声明了某事件名的 extension（不含 exclude） */
+/** 全局查找在 extension.json 的 event.emit 中声明了某事件名的 extension（可选 exclude） */
 export async function findExtensionsDeclaringEventEmit(
   eventName: string,
-  excludeExtensionRoot: vscode.Uri
+  excludeExtensionRoot?: vscode.Uri
 ): Promise<GlobalProviderHit[]> {
   const hits: GlobalProviderHit[] = [];
   const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
@@ -499,7 +502,10 @@ export async function findExtensionsDeclaringEventEmit(
       }
       const dir = path.dirname(jsonPath);
       const extRoot = vscode.Uri.file(dir);
-      if (extRoot.fsPath === excludeExtensionRoot.fsPath) {
+      if (
+        excludeExtensionRoot &&
+        extRoot.fsPath === excludeExtensionRoot.fsPath
+      ) {
         continue;
       }
       hits.push({
