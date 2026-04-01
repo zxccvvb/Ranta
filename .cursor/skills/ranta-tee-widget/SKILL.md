@@ -1,6 +1,6 @@
 ---
 name: ranta-tee-widget
-description: Ranta 插件：Vue 模板自定义标签与 extension.json 的 widget（default / provide / consume）→ index.js static widgets 与 import；本 extension provide 优先，否则全局枚举 widget.provide；多 extension 同名时全列。
+description: Ranta 插件：Vue 模板自定义标签与 extension.json 的 widget（default / provide / consume）→ index.js static widgets 与 import；本 extension provide 优先，否则全局枚举 widget.provide；多 extension 同名时全列。模板与检索：标签可 Pascal 或 kebab，手工搜需两种形式都试。
 tags: [ranta, tee, extension, widget, vue, static-widgets, provide, consume, ctx]
 ---
 
@@ -9,6 +9,12 @@ tags: [ranta, tee, extension, widget, vue, static-widgets, provide, consume, ctx
 与 **`src/resolveDefinition.ts`** 中 `resolveTeeWidgetDefinition` 的 **widget 分支**、**`src/extensionJsonResolve.ts`** 中 `widget.default` / `widget.provide` / `widget.consume`、**`src/widgetResolver.ts`** 中标签与索引逻辑一致。
 
 ## Vue 模板
+
+### 驼峰（Pascal）与短横线（kebab）——查找必看
+
+- 自定义标签名在模板里常见两种写法，**解析等价**：**PascalCase**（如 `<GoodsList />`）与 **kebab-case**（如 `<goods-list />`）。解析器会把标签统一成 **Pascal**（`tagToWidgetPascal`：`-` 分段首字母大写后拼接；无 `-` 时仅首字母大写）。
+- **`extension.json` 的 `widget.default` / `provide` / `consume` 符号**、**`index.js` 里 `static widgets` 的键** 一般为 **PascalCase**；从 kebab 标签反查时，先转成 Pascal 再对 JSON / static。
+- **手工在仓库里搜 widget 时**：**同时**搜 **Pascal 名** 与 **kebab 名**（例如 `GoodsList` 与 `goods-list`），避免只搜一种而漏掉另一半模板或配置。
 
 - 光标落在 **自定义标签名**上（非内置、非 `van-*`，见 `shouldSkipTag` / `BUILTIN_TAGS`）。
 - 标签名 → 大驼峰 `tagToWidgetPascal`（`-` 分段首大写；无 `-` 时仅首字母大写）。
