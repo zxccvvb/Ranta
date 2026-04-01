@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import {
   resolveDataAccessToExtensionJson,
@@ -10,6 +11,34 @@ import {
   shouldSkipTag,
   tagToWidgetPascal,
 } from './widgetResolver';
+
+async function revealFirstOrPickLocations(
+  locs: vscode.Location[],
+  placeHolder: string
+): Promise<void> {
+  if (!locs.length) {
+    return;
+  }
+  if (locs.length === 1) {
+    await vscode.window.showTextDocument(locs[0].uri, {
+      selection: locs[0].range,
+    });
+    return;
+  }
+  const picked = await vscode.window.showQuickPick(
+    locs.map((l) => ({
+      label: `${path.basename(l.uri.fsPath)}:${l.range.start.line + 1}:${l.range.start.character + 1}`,
+      description: l.uri.fsPath,
+      location: l,
+    })),
+    { placeHolder }
+  );
+  if (picked?.location) {
+    await vscode.window.showTextDocument(picked.location.uri, {
+      selection: picked.location.range,
+    });
+  }
+}
 
 async function goToDefinitionAtCursor(
   editor: vscode.TextEditor
@@ -43,24 +72,10 @@ async function goToDefinitionAtCursor(
       const widgetPascal = tagToWidgetPascal(tag);
       const locs = await resolveTeeWidgetDefinition(document.uri, widgetPascal);
       if (locs?.length) {
-        if (locs.length === 1) {
-          await vscode.window.showTextDocument(locs[0].uri, {
-            selection: locs[0].range,
-          });
-        } else {
-          const picked = await vscode.window.showQuickPick(
-            locs.map((l) => ({
-              label: l.uri.fsPath,
-              location: l,
-            })),
-            { placeHolder: '多个 extension 提供了同名 widget，请选择' }
-          );
-          if (picked?.location) {
-            await vscode.window.showTextDocument(picked.location.uri, {
-              selection: picked.location.range,
-            });
-          }
-        }
+        await revealFirstOrPickLocations(
+          locs,
+          'Ranta：多个 extension 提供了同名 widget，请选择'
+        );
         return;
       }
     }
@@ -69,9 +84,10 @@ async function goToDefinitionAtCursor(
   if (document.fileName.endsWith('extension.json')) {
     const jsonLocs = await resolveExtensionJsonDefinition(document, pos);
     if (jsonLocs?.length) {
-      await vscode.window.showTextDocument(jsonLocs[0].uri, {
-        selection: jsonLocs[0].range,
-      });
+      await revealFirstOrPickLocations(
+        jsonLocs,
+        'Ranta：extension.json 解析到多个匹配，请选择'
+      );
       return;
     }
   }

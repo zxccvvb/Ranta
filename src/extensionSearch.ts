@@ -89,3 +89,64 @@ export async function searchFirstInExtension(
   }
   return undefined;
 }
+
+/** 单行内所有匹配（用于同一行多次 emit 等） */
+export function findAllMatchLocationsOnLine(
+  fileUri: vscode.Uri,
+  lineIndex: number,
+  line: string,
+  regex: RegExp
+): vscode.Location[] {
+  const locs: vscode.Location[] = [];
+  const re = new RegExp(regex.source, regex.flags.replace(/g/g, '') + 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    if (m.index !== undefined) {
+      const col = m.index;
+      locs.push(
+        new vscode.Location(
+          fileUri,
+          new vscode.Range(
+            lineIndex,
+            col,
+            lineIndex,
+            col + m[0].length
+          )
+        )
+      );
+    }
+  }
+  return locs;
+}
+
+/** 在单文件内查找所有匹配 */
+export async function findAllMatchLocationsInFile(
+  filePath: string,
+  regex: RegExp
+): Promise<vscode.Location[]> {
+  const uri = vscode.Uri.file(filePath);
+  const locs: vscode.Location[] = [];
+  try {
+    const text = await fs.readFile(filePath, 'utf8');
+    const lines = text.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      locs.push(...findAllMatchLocationsOnLine(uri, i, lines[i], regex));
+    }
+  } catch {
+    return [];
+  }
+  return locs;
+}
+
+/** 在 extension 目录内多文件搜索全部匹配（按文件路径排序） */
+export async function searchAllInExtension(
+  extensionRoot: vscode.Uri,
+  regex: RegExp
+): Promise<vscode.Location[]> {
+  const files = (await listExtensionSourceFiles(extensionRoot)).sort();
+  const out: vscode.Location[] = [];
+  for (const f of files) {
+    out.push(...(await findAllMatchLocationsInFile(f, regex)));
+  }
+  return out;
+}

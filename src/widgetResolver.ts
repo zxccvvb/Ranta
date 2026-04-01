@@ -342,6 +342,197 @@ async function collectExtensionJsonPaths(workspaceRoot: string): Promise<string[
   return results;
 }
 
+/** data.provide / data.consume 可能是 string[] 或 Record<key, …> */
+export function keysFromDataBlock(block: unknown): string[] {
+  if (block == null) {
+    return [];
+  }
+  if (Array.isArray(block)) {
+    return block.filter((x): x is string => typeof x === 'string');
+  }
+  if (typeof block === 'object') {
+    return Object.keys(block as Record<string, unknown>);
+  }
+  return [];
+}
+
+/** 全局查找在 extension.json 的 data.provide 中声明了某字段的 extension */
+export async function findExtensionsProvidingDataKey(
+  key: string
+): Promise<GlobalProviderHit[]> {
+  const hits: GlobalProviderHit[] = [];
+  const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
+  const jsonPaths: string[] = [];
+  for (const root of roots) {
+    jsonPaths.push(...(await collectExtensionJsonPaths(root)));
+  }
+  const seenPath = new Set<string>();
+  for (const jsonPath of jsonPaths) {
+    if (seenPath.has(jsonPath)) {
+      continue;
+    }
+    seenPath.add(jsonPath);
+    try {
+      const text = await fs.readFile(jsonPath, 'utf8');
+      const j = JSON.parse(text) as { data?: { provide?: unknown } };
+      const keys = keysFromDataBlock(j.data?.provide);
+      if (keys.includes(key)) {
+        const dir = path.dirname(jsonPath);
+        hits.push({
+          extensionRoot: vscode.Uri.file(dir),
+          extensionJsonPath: jsonPath,
+        });
+      }
+    } catch {
+      // skip
+    }
+  }
+  return hits;
+}
+
+/** 全局查找在 extension.json 的 process.define 中声明了某名称的 extension */
+export async function findExtensionsDefiningProcess(
+  name: string
+): Promise<GlobalProviderHit[]> {
+  const hits: GlobalProviderHit[] = [];
+  const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
+  const jsonPaths: string[] = [];
+  for (const root of roots) {
+    jsonPaths.push(...(await collectExtensionJsonPaths(root)));
+  }
+  const seenPath = new Set<string>();
+  for (const jsonPath of jsonPaths) {
+    if (seenPath.has(jsonPath)) {
+      continue;
+    }
+    seenPath.add(jsonPath);
+    try {
+      const text = await fs.readFile(jsonPath, 'utf8');
+      const j = JSON.parse(text) as { process?: { define?: unknown } };
+      const def = j.process?.define;
+      const names = Array.isArray(def)
+        ? def.filter((x): x is string => typeof x === 'string')
+        : [];
+      if (names.includes(name)) {
+        const dir = path.dirname(jsonPath);
+        hits.push({
+          extensionRoot: vscode.Uri.file(dir),
+          extensionJsonPath: jsonPath,
+        });
+      }
+    } catch {
+      // skip
+    }
+  }
+  return hits;
+}
+
+/** 全局查找在 extension.json 的 event.listen 中声明了某事件名的 extension（不含 exclude） */
+export async function findExtensionsDeclaringEventListen(
+  eventName: string,
+  excludeExtensionRoot: vscode.Uri
+): Promise<GlobalProviderHit[]> {
+  const hits: GlobalProviderHit[] = [];
+  const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
+  const jsonPaths: string[] = [];
+  for (const root of roots) {
+    jsonPaths.push(...(await collectExtensionJsonPaths(root)));
+  }
+  const seenPath = new Set<string>();
+  for (const jsonPath of jsonPaths) {
+    if (seenPath.has(jsonPath)) {
+      continue;
+    }
+    seenPath.add(jsonPath);
+    try {
+      const text = await fs.readFile(jsonPath, 'utf8');
+      const j = JSON.parse(text) as { event?: { listen?: unknown } };
+      const list = j.event?.listen;
+      const names = Array.isArray(list)
+        ? list.filter((x): x is string => typeof x === 'string')
+        : [];
+      if (!names.includes(eventName)) {
+        continue;
+      }
+      const dir = path.dirname(jsonPath);
+      const extRoot = vscode.Uri.file(dir);
+      if (extRoot.fsPath === excludeExtensionRoot.fsPath) {
+        continue;
+      }
+      hits.push({
+        extensionRoot: extRoot,
+        extensionJsonPath: jsonPath,
+      });
+    } catch {
+      // skip
+    }
+  }
+  return hits;
+}
+
+/** 全局查找在 extension.json 的 event.emit 中声明了某事件名的 extension（不含 exclude） */
+export async function findExtensionsDeclaringEventEmit(
+  eventName: string,
+  excludeExtensionRoot: vscode.Uri
+): Promise<GlobalProviderHit[]> {
+  const hits: GlobalProviderHit[] = [];
+  const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
+  const jsonPaths: string[] = [];
+  for (const root of roots) {
+    jsonPaths.push(...(await collectExtensionJsonPaths(root)));
+  }
+  const seenPath = new Set<string>();
+  for (const jsonPath of jsonPaths) {
+    if (seenPath.has(jsonPath)) {
+      continue;
+    }
+    seenPath.add(jsonPath);
+    try {
+      const text = await fs.readFile(jsonPath, 'utf8');
+      const j = JSON.parse(text) as { event?: { emit?: unknown } };
+      const list = j.event?.emit;
+      const names = Array.isArray(list)
+        ? list.filter((x): x is string => typeof x === 'string')
+        : [];
+      if (!names.includes(eventName)) {
+        continue;
+      }
+      const dir = path.dirname(jsonPath);
+      const extRoot = vscode.Uri.file(dir);
+      if (extRoot.fsPath === excludeExtensionRoot.fsPath) {
+        continue;
+      }
+      hits.push({
+        extensionRoot: extRoot,
+        extensionJsonPath: jsonPath,
+      });
+    } catch {
+      // skip
+    }
+  }
+  return hits;
+}
+
+/** 枚举工作区内所有 Tee extension 根目录（含 extension.json 的目录） */
+export async function enumerateExtensionRoots(): Promise<vscode.Uri[]> {
+  const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
+  const jsonPaths: string[] = [];
+  for (const root of roots) {
+    jsonPaths.push(...(await collectExtensionJsonPaths(root)));
+  }
+  const seen = new Set<string>();
+  const out: vscode.Uri[] = [];
+  for (const p of jsonPaths) {
+    const dir = path.dirname(p);
+    if (seen.has(dir)) {
+      continue;
+    }
+    seen.add(dir);
+    out.push(vscode.Uri.file(dir));
+  }
+  return out;
+}
+
 /** 在工作区根目录下搜索 widget / component / lambda 的 provide 列表是否包含指定名称 */
 export async function findExtensionsProvidingList(
   sectionKey: 'widget' | 'component' | 'lambda',

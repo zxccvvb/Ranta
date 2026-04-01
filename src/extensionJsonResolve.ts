@@ -6,10 +6,15 @@ import {
   getJsonStringAtPosition,
   inferExtensionJsonContext,
 } from './extensionJsonContext';
-import { escapeRegExp, searchFirstInExtension } from './extensionSearch';
+import { escapeRegExp, searchAllInExtension } from './extensionSearch';
 import {
+  findExtensionsDeclaringEventEmit,
+  findExtensionsDeclaringEventListen,
   findExtensionRootAsync,
+  findExtensionsDefiningProcess,
+  findExtensionsProvidingDataKey,
   findExtensionsProvidingList,
+  enumerateExtensionRoots,
   readExtensionJson,
   resolveNamedStaticExport,
 } from './widgetResolver';
@@ -29,6 +34,117 @@ const RESERVED_SYMBOLS = new Set([
   'process',
   'event',
 ]);
+
+function uriPathEqual(a: vscode.Uri, b: vscode.Uri): boolean {
+  return a.fsPath === b.fsPath;
+}
+
+function dedupeLocations(locs: vscode.Location[]): vscode.Location[] {
+  const seen = new Set<string>();
+  const out: vscode.Location[] = [];
+  for (const l of locs) {
+    const k = `${l.uri.fsPath}:${l.range.start.line}:${l.range.start.character}:${l.range.end.line}:${l.range.end.character}`;
+    if (seen.has(k)) {
+      continue;
+    }
+    seen.add(k);
+    out.push(l);
+  }
+  return out;
+}
+
+/** data：对 xxx 的赋值（含 this.ctx.data / this.data / ctx.data） */
+function dataAssignRegex(sym: string): RegExp {
+  return new RegExp(
+    `(?:this\\.ctx\\.data|this\\.data|ctx\\.data)\\.${escapeRegExp(sym)}\\b\\s*=`
+  );
+}
+
+function dataBracketAssignRegex(sym: string): RegExp {
+  return new RegExp(
+    `(?:this\\.ctx\\.data|this\\.data|ctx\\.data)\\[\\s*['"]${escapeRegExp(sym)}['"]\\s*\\]\\s*=`
+  );
+}
+
+function dataAccessRegex(sym: string): RegExp {
+  return new RegExp(
+    `(?:this\\.ctx\\.data|this\\.data|ctx\\.data)\\.${escapeRegExp(sym)}\\b`
+  );
+}
+
+/** event：.emit('symbol' */
+function eventEmitCallRegex(sym: string): RegExp {
+  return new RegExp(
+    `\\.emit\\s*\\(\\s*['"]${escapeRegExp(sym)}['"]`
+  );
+}
+
+/** event：.listen('symbol'（如 this.ctx.event.listen） */
+function eventListenCallRegex(sym: string): RegExp {
+  return new RegExp(
+    `\\.listen\\s*\\(\\s*['"]${escapeRegExp(sym)}['"]`
+  );
+}
+
+function processDefineCallRegex(sym: string): RegExp {
+  return new RegExp(
+    `(?:this\\.ctx\\.process|this\\.process|process)\\.define\\s*\\(\\s*['"]${escapeRegExp(sym)}['"]`
+  );
+}
+
+/**
+ * data.provide：本 extension 内对字段的赋值；若无赋值则退化为任意 .data.xxx 访问。
+ */
+async function searchDataSymbolInExtension(
+  extensionRoot: vscode.Uri,
+  sym: string
+): Promise<vscode.Location[]> {
+  let merged = [
+    ...(await searchAllInExtension(extensionRoot, dataAssignRegex(sym))),
+    ...(await searchAllInExtension(extensionRoot, dataBracketAssignRegex(sym))),
+  ];
+  if (merged.length === 0) {
+    merged = await searchAllInExtension(extensionRoot, dataAccessRegex(sym));
+  }
+  return dedupeLocations(merged);
+}
+
+/**
+ * data.consume：在全局 data.provide 中声明了该字段的 extension 内搜索赋值/访问。
+ */
+async function searchDataConsumeAcrossProviders(
+  sym: string
+): Promise<vscode.Location[]> {
+  const providers = await findExtensionsProvidingDataKey(sym);
+  const out: vscode.Location[] = [];
+  for (const p of providers) {
+    out.push(...(await searchDataSymbolInExtension(p.extensionRoot, sym)));
+  }
+  return dedupeLocations(out);
+}
+
+/**
+ * process.invoke：在「非当前」extension 中找 define('名称'（优先 JSON process.define 命中目录，否则全盘除当前外搜索）。
+ */
+async function searchProcessDefineExternal(
+  currentExt: vscode.Uri,
+  sym: string
+): Promise<vscode.Location[]> {
+  const re = processDefineCallRegex(sym);
+  const defs = await findExtensionsDefiningProcess(sym);
+  const external = defs.filter((d) => !uriPathEqual(d.extensionRoot, currentExt));
+  let rootsToScan = external.map((d) => d.extensionRoot);
+  if (rootsToScan.length === 0) {
+    rootsToScan = (await enumerateExtensionRoots()).filter(
+      (r) => !uriPathEqual(r, currentExt)
+    );
+  }
+  const out: vscode.Location[] = [];
+  for (const root of rootsToScan) {
+    out.push(...(await searchAllInExtension(root, re)));
+  }
+  return dedupeLocations(out);
+}
 
 function staticKindFor(
   section: 'widget' | 'component' | 'lambda'
@@ -112,45 +228,97 @@ export async function resolveExtensionJsonDefinition(
     return resolveStaticListSymbol(ctx.section, extRoot, sym);
   }
 
-  if (
-    ctx.section === 'data' &&
-    (ctx.sub === 'provide' || ctx.sub === 'consume')
-  ) {
-    const re = new RegExp(
-      `(?:this\\.data|this\\.ctx\\.data|ctx\\.data)\\.${escapeRegExp(sym)}\\b`
-    );
-    const loc = await searchFirstInExtension(extRoot, re);
-    return loc ? [loc] : undefined;
+  if (ctx.section === 'data' && ctx.sub === 'provide') {
+    const locs = await searchDataSymbolInExtension(extRoot, sym);
+    return locs.length ? locs : undefined;
+  }
+
+  if (ctx.section === 'data' && ctx.sub === 'consume') {
+    const locs = await searchDataConsumeAcrossProviders(sym);
+    return locs.length ? locs : undefined;
   }
 
   if (ctx.section === 'process' && ctx.sub === 'define') {
-    const re = new RegExp(
-      `(?:this\\.ctx\\.process|this\\.process|process)\\.define\\s*\\(\\s*['"]${escapeRegExp(sym)}['"]`
-    );
-    const loc = await searchFirstInExtension(extRoot, re);
-    return loc ? [loc] : undefined;
+    const re = processDefineCallRegex(sym);
+    const locs = await searchAllInExtension(extRoot, re);
+    return locs.length ? locs : undefined;
   }
 
   if (ctx.section === 'process' && ctx.sub === 'invoke') {
-    const re = new RegExp(
-      `\\.invoke\\s*\\(\\s*['"]${escapeRegExp(sym)}['"]`
-    );
-    const loc = await searchFirstInExtension(extRoot, re);
-    return loc ? [loc] : undefined;
+    const locs = await searchProcessDefineExternal(extRoot, sym);
+    return locs.length ? locs : undefined;
   }
 
-  if (
-    ctx.section === 'event' &&
-    (ctx.sub === 'emit' || ctx.sub === 'listen')
-  ) {
-    const re = new RegExp(
-      `(?:\\.emit|\\.listen|emit|listen)\\s*\\(\\s*['"]${escapeRegExp(sym)}['"]`
-    );
-    const loc = await searchFirstInExtension(extRoot, re);
-    return loc ? [loc] : undefined;
+  if (ctx.section === 'event' && ctx.sub === 'emit') {
+    const re = eventEmitCallRegex(sym);
+    const emitLocs = await searchAllInExtension(extRoot, re);
+    const listenDecls = await findExtensionsDeclaringEventListen(sym, extRoot);
+    const jsonLocs: vscode.Location[] = [];
+    for (const d of listenDecls) {
+      const jl = await findEventNameInExtensionJson(d.extensionRoot, sym, 'listen');
+      if (jl) {
+        jsonLocs.push(...jl);
+      }
+    }
+    const merged = dedupeLocations([...emitLocs, ...jsonLocs]);
+    return merged.length ? merged : undefined;
+  }
+
+  if (ctx.section === 'event' && ctx.sub === 'listen') {
+    const re = eventListenCallRegex(sym);
+    const listenLocs = await searchAllInExtension(extRoot, re);
+    const emitDecls = await findExtensionsDeclaringEventEmit(sym, extRoot);
+    const jsonLocs: vscode.Location[] = [];
+    for (const d of emitDecls) {
+      const jl = await findEventNameInExtensionJson(d.extensionRoot, sym, 'emit');
+      if (jl) {
+        jsonLocs.push(...jl);
+      }
+    }
+    const merged = dedupeLocations([...listenLocs, ...jsonLocs]);
+    return merged.length ? merged : undefined;
   }
 
   return undefined;
+}
+
+/** 在 extension.json 的 event.emit / listen 数组中定位事件名字符串 */
+export async function findEventNameInExtensionJson(
+  extensionRoot: vscode.Uri,
+  name: string,
+  sub: 'emit' | 'listen'
+): Promise<vscode.Location[] | undefined> {
+  const jsonUri = vscode.Uri.joinPath(extensionRoot, 'extension.json');
+  try {
+    const buf = await fs.readFile(jsonUri.fsPath, 'utf8');
+    const j = JSON.parse(buf) as { event?: { emit?: string[]; listen?: string[] } };
+    const arr = sub === 'emit' ? j.event?.emit : j.event?.listen;
+    if (!Array.isArray(arr) || !arr.includes(name)) {
+      return undefined;
+    }
+    const lines = buf.split(/\r?\n/);
+    const keyRe = new RegExp(`"${escapeRegExp(name)}"`);
+    const out: vscode.Location[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (!keyRe.test(lines[i])) {
+        continue;
+      }
+      const col = lines[i].indexOf(`"${name}"`);
+      if (col < 0) {
+        continue;
+      }
+      const range = new vscode.Range(
+        i,
+        col + 1,
+        i,
+        col + 1 + name.length
+      );
+      out.push(new vscode.Location(jsonUri, range));
+    }
+    return out.length ? out : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** 在 extension.json 的 data.provide / consume 中定位 `"key":` */
