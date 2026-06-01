@@ -115,6 +115,8 @@ export interface ExtensionJsonWidget {
 }
 
 export interface ParsedExtensionJson {
+  name?: string;
+  extensionId?: string;
   widget?: ExtensionJsonWidget;
   component?: ExtensionJsonWidget;
   lambda?: ExtensionJsonWidget;
@@ -284,11 +286,79 @@ export async function resolveNamedStaticExport(
   return resolveImportToFile(extensionRoot, imp);
 }
 
+async function fileExists(uri: vscode.Uri): Promise<boolean> {
+  try {
+    await vscode.workspace.fs.stat(uri);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveConventionExportToFile(
+  extensionRoot: vscode.Uri,
+  exportName: string,
+  kind: 'widgets' | 'components' | 'lambdas'
+): Promise<vscode.Uri | undefined> {
+  const base = extensionRoot.fsPath;
+  const dirs =
+    kind === 'widgets'
+      ? ['', 'widgets']
+      : kind === 'components'
+        ? ['', 'components']
+        : ['', 'lambdas'];
+  const candidates: string[] = [];
+  for (const dir of dirs) {
+    const p = dir ? path.join(base, dir, exportName) : path.join(base, exportName);
+    candidates.push(p + '.vue', p + '.js', p + '.ts', path.join(p, 'index.vue'));
+    candidates.push(path.join(p, 'index.js'), path.join(p, 'index.ts'));
+  }
+  for (const p of candidates) {
+    const uri = vscode.Uri.file(p);
+    if (await fileExists(uri)) {
+      return uri;
+    }
+  }
+  return undefined;
+}
+
+export async function resolveStaticOrConventionExport(
+  extensionRoot: vscode.Uri,
+  exportName: string,
+  kind: 'widgets' | 'components' | 'lambdas'
+): Promise<vscode.Uri | undefined> {
+  const staticTarget = await resolveNamedStaticExport(extensionRoot, exportName, kind);
+  if (staticTarget) {
+    return staticTarget;
+  }
+  const conventionTarget = await resolveConventionExportToFile(
+    extensionRoot,
+    exportName,
+    kind
+  );
+  if (conventionTarget) {
+    return conventionTarget;
+  }
+
+  const meta = await readExtensionJson(extensionRoot);
+  const block =
+    kind === 'widgets'
+      ? meta?.widget
+      : kind === 'components'
+        ? meta?.component
+        : meta?.lambda;
+  const indexUri = vscode.Uri.joinPath(extensionRoot, 'index.js');
+  if (block?.default === exportName && (await fileExists(indexUri))) {
+    return indexUri;
+  }
+  return undefined;
+}
+
 export async function resolveWidgetInExtension(
   extensionRoot: vscode.Uri,
   widgetPascal: string
 ): Promise<vscode.Uri | undefined> {
-  return resolveNamedStaticExport(extensionRoot, widgetPascal, 'widgets');
+  return resolveStaticOrConventionExport(extensionRoot, widgetPascal, 'widgets');
 }
 
 export interface GlobalProviderHit {
@@ -307,11 +377,28 @@ const WALK_SKIP_DIRS = new Set([
   'miniprogram_npm',
 ]);
 
+const extensionJsonPathCache = new Map<string, Promise<string[]>>();
+let extensionRootsCache: Promise<vscode.Uri[]> | undefined;
+let extensionNameRootMapCache: Promise<Map<string, vscode.Uri>> | undefined;
+const pageConfigPathCache = new Map<string, Promise<string[]>>();
+
 /**
  * 在磁盘上枚举「extensions 的直接子目录下的 extension.json」。
  * 不依赖 VS Code 的 search index，因此能扫到被 .gitignore 忽略的 Tee 源码目录（如 src/ext-tee-*）。
  */
 async function collectExtensionJsonPaths(workspaceRoot: string): Promise<string[]> {
+  const cached = extensionJsonPathCache.get(workspaceRoot);
+  if (cached) {
+    return cached;
+  }
+  const promise = collectExtensionJsonPathsUncached(workspaceRoot);
+  extensionJsonPathCache.set(workspaceRoot, promise);
+  return promise;
+}
+
+async function collectExtensionJsonPathsUncached(
+  workspaceRoot: string
+): Promise<string[]> {
   const results: string[] = [];
   async function walk(dir: string, depth: number): Promise<void> {
     if (depth > 48) {
@@ -521,6 +608,14 @@ export async function findExtensionsDeclaringEventEmit(
 
 /** 枚举工作区内所有 Tee extension 根目录（含 extension.json 的目录） */
 export async function enumerateExtensionRoots(): Promise<vscode.Uri[]> {
+  if (extensionRootsCache) {
+    return extensionRootsCache;
+  }
+  extensionRootsCache = enumerateExtensionRootsUncached();
+  return extensionRootsCache;
+}
+
+async function enumerateExtensionRootsUncached(): Promise<vscode.Uri[]> {
   const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
   const jsonPaths: string[] = [];
   for (const root of roots) {
@@ -585,6 +680,195 @@ export async function findExtensionsProvidingWidget(
   widgetPascal: string
 ): Promise<GlobalProviderHit[]> {
   return findExtensionsProvidingList('widget', widgetPascal);
+}
+
+interface PageBindingTarget {
+  moduleId?: string;
+  name?: string;
+}
+
+interface PageModule {
+  id?: string;
+  extensionName?: string;
+  bindings?: Record<string, PageBindingTarget[]>;
+}
+
+interface PageConfig {
+  modules?: PageModule[];
+}
+
+export interface PageModuleContext {
+  pageConfigPath: string;
+  currentModule: PageModule;
+  modules: PageModule[];
+}
+
+async function collectPageConfigPaths(workspaceRoot: string): Promise<string[]> {
+  const cached = pageConfigPathCache.get(workspaceRoot);
+  if (cached) {
+    return cached;
+  }
+  const promise = Promise.resolve(
+    vscode.workspace.findFiles(
+      new vscode.RelativePattern(
+        workspaceRoot,
+        '**/ranta-config/bizs/**/*.page.json'
+      ),
+      '**/{node_modules,.git,dist,out,.next,build,coverage,miniprogram_npm}/**'
+    )
+  ).then((uris) => uris.map((uri) => uri.fsPath));
+  pageConfigPathCache.set(workspaceRoot, promise);
+  return promise;
+}
+
+function extensionNameMatchesModule(meta: ParsedExtensionJson, mod: PageModule): boolean {
+  if (!mod.extensionName) {
+    return false;
+  }
+  return mod.extensionName === meta.name || mod.extensionName === meta.extensionId;
+}
+
+export async function findExtensionRootByName(
+  extensionName: string
+): Promise<vscode.Uri | undefined> {
+  const map = await getExtensionNameRootMap();
+  return map.get(extensionName);
+}
+
+async function getExtensionNameRootMap(): Promise<Map<string, vscode.Uri>> {
+  if (extensionNameRootMapCache) {
+    return extensionNameRootMapCache;
+  }
+  extensionNameRootMapCache = getExtensionNameRootMapUncached();
+  return extensionNameRootMapCache;
+}
+
+async function getExtensionNameRootMapUncached(): Promise<Map<string, vscode.Uri>> {
+  const map = new Map<string, vscode.Uri>();
+  const roots = await enumerateExtensionRoots();
+  for (const root of roots) {
+    const meta = await readExtensionJson(root);
+    if (meta?.name) {
+      map.set(meta.name, root);
+    }
+    if (meta?.extensionId) {
+      map.set(meta.extensionId, root);
+    }
+  }
+  return map;
+}
+
+export async function findPageModuleContextsForExtension(
+  extensionRoot: vscode.Uri
+): Promise<PageModuleContext[]> {
+  const meta = await readExtensionJson(extensionRoot);
+  if (!meta?.name && !meta?.extensionId) {
+    return [];
+  }
+  const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
+  const pagePaths: string[] = [];
+  for (const root of roots) {
+    pagePaths.push(...(await collectPageConfigPaths(root)));
+  }
+
+  const contexts: PageModuleContext[] = [];
+  const seenPath = new Set<string>();
+  for (const pagePath of pagePaths) {
+    if (seenPath.has(pagePath)) {
+      continue;
+    }
+    seenPath.add(pagePath);
+    try {
+      const text = await fs.readFile(pagePath, 'utf8');
+      const page = JSON.parse(text) as PageConfig;
+      const modules = Array.isArray(page.modules) ? page.modules : [];
+      for (const mod of modules) {
+        if (extensionNameMatchesModule(meta, mod)) {
+          contexts.push({
+            pageConfigPath: pagePath,
+            currentModule: mod,
+            modules,
+          });
+        }
+      }
+    } catch {
+      // skip invalid page configs
+    }
+  }
+  return contexts;
+}
+
+export async function resolvePageBindingWidgetTargets(
+  extensionRoot: vscode.Uri,
+  widgetName: string
+): Promise<vscode.Uri[]> {
+  const contexts = await findPageModuleContextsForExtension(extensionRoot);
+  const out: vscode.Uri[] = [];
+  const seen = new Set<string>();
+  for (const ctx of contexts) {
+    const bindings = ctx.currentModule.bindings?.[`widget.${widgetName}`] ?? [];
+    for (const binding of bindings) {
+      const targetModule = ctx.modules.find((m) => m.id === binding.moduleId);
+      const targetName = binding.name;
+      const targetExtensionName = targetModule?.extensionName;
+      if (!targetName || !targetExtensionName) {
+        continue;
+      }
+      const targetRoot = await findExtensionRootByName(targetExtensionName);
+      if (!targetRoot) {
+        continue;
+      }
+      const target = await resolveStaticOrConventionExport(
+        targetRoot,
+        targetName,
+        'widgets'
+      );
+      if (target && !seen.has(target.fsPath)) {
+        seen.add(target.fsPath);
+        out.push(target);
+      }
+    }
+  }
+  return out;
+}
+
+export async function findPageScopedExtensionsProvidingList(
+  extensionRoot: vscode.Uri,
+  sectionKey: 'widget' | 'component' | 'lambda',
+  name: string
+): Promise<GlobalProviderHit[]> {
+  const contexts = await findPageModuleContextsForExtension(extensionRoot);
+  const hits: GlobalProviderHit[] = [];
+  const seen = new Set<string>();
+  for (const ctx of contexts) {
+    for (const mod of ctx.modules) {
+      if (!mod.extensionName) {
+        continue;
+      }
+      const providerRoot = await findExtensionRootByName(mod.extensionName);
+      if (!providerRoot || seen.has(providerRoot.fsPath)) {
+        continue;
+      }
+      const meta = await readExtensionJson(providerRoot);
+      if (!meta) {
+        continue;
+      }
+      const block =
+        sectionKey === 'widget'
+          ? meta?.widget
+          : sectionKey === 'component'
+            ? meta?.component
+            : meta?.lambda;
+      if (block?.provide?.includes(name)) {
+        seen.add(providerRoot.fsPath);
+        hits.push({
+          extensionRoot: providerRoot,
+          extensionJsonPath: meta.rawPath,
+        });
+      }
+    }
+  }
+  return hits;
 }
 
 /** 光标所在行上，若落在 `<tag` 或 `</tag` 的标签名上则返回该标签名 */

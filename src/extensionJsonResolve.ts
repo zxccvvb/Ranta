@@ -16,7 +16,7 @@ import {
   findExtensionsProvidingList,
   enumerateExtensionRoots,
   readExtensionJson,
-  resolveNamedStaticExport,
+  resolveStaticOrConventionExport,
 } from './widgetResolver';
 
 const RESERVED_SYMBOLS = new Set([
@@ -174,7 +174,7 @@ async function resolveStaticListSymbol(
   const sk = staticKindFor(section);
 
   if (provides.includes(name)) {
-    const u = await resolveNamedStaticExport(extensionRoot, name, sk);
+    const u = await resolveStaticOrConventionExport(extensionRoot, name, sk);
     if (u) {
       return [new vscode.Location(u, new vscode.Range(0, 0, 0, 0))];
     }
@@ -184,7 +184,7 @@ async function resolveStaticListSymbol(
   const out: vscode.Location[] = [];
   const seen = new Set<string>();
   for (const h of hits) {
-    const u = await resolveNamedStaticExport(h.extensionRoot, name, sk);
+    const u = await resolveStaticOrConventionExport(h.extensionRoot, name, sk);
     if (u && !seen.has(u.fsPath)) {
       seen.add(u.fsPath);
       out.push(new vscode.Location(u, new vscode.Range(0, 0, 0, 0)));
@@ -213,7 +213,7 @@ export async function resolveExtensionJsonDefinition(
   const extRoot = vscode.Uri.file(path.dirname(document.uri.fsPath));
 
   if (ctx.section === 'widget' && ctx.sub === 'default') {
-    const u = await resolveNamedStaticExport(extRoot, sym, 'widgets');
+    const u = await resolveStaticOrConventionExport(extRoot, sym, 'widgets');
     return u
       ? [new vscode.Location(u, new vscode.Range(0, 0, 0, 0))]
       : undefined;
