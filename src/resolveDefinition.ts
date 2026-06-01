@@ -68,9 +68,10 @@ export async function resolveTeeWidgetDefinition(
   const pageScopedWidgetHits = extRoot
     ? await findPageScopedExtensionsProvidingList(extRoot, 'widget', namePascal)
     : [];
-  const widgetHits = pageScopedWidgetHits.length
-    ? pageScopedWidgetHits
-    : await findExtensionsProvidingList('widget', namePascal);
+  const widgetHits =
+    extRoot && (locations.length || pageScopedWidgetHits.length)
+      ? pageScopedWidgetHits
+      : await findExtensionsProvidingList('widget', namePascal);
   for (const hit of widgetHits) {
     const target = await resolveStaticOrConventionExport(
       hit.extensionRoot,
@@ -88,9 +89,10 @@ export async function resolveTeeWidgetDefinition(
   const pageScopedComponentHits = extRoot
     ? await findPageScopedExtensionsProvidingList(extRoot, 'component', namePascal)
     : [];
-  const componentHits = pageScopedComponentHits.length
-    ? pageScopedComponentHits
-    : await findExtensionsProvidingList('component', namePascal);
+  const componentHits =
+    extRoot && (locations.length || pageScopedComponentHits.length)
+      ? pageScopedComponentHits
+      : await findExtensionsProvidingList('component', namePascal);
   for (const hit of componentHits) {
     const target = await resolveStaticOrConventionExport(
       hit.extensionRoot,

@@ -379,7 +379,7 @@ const WALK_SKIP_DIRS = new Set([
 
 const extensionJsonPathCache = new Map<string, Promise<string[]>>();
 let extensionRootsCache: Promise<vscode.Uri[]> | undefined;
-let extensionNameRootMapCache: Promise<Map<string, vscode.Uri>> | undefined;
+const extensionNameRootCache = new Map<string, Promise<vscode.Uri | undefined>>();
 const pageConfigPathCache = new Map<string, Promise<string[]>>();
 
 /**
@@ -731,31 +731,37 @@ function extensionNameMatchesModule(meta: ParsedExtensionJson, mod: PageModule):
 export async function findExtensionRootByName(
   extensionName: string
 ): Promise<vscode.Uri | undefined> {
-  const map = await getExtensionNameRootMap();
-  return map.get(extensionName);
-}
-
-async function getExtensionNameRootMap(): Promise<Map<string, vscode.Uri>> {
-  if (extensionNameRootMapCache) {
-    return extensionNameRootMapCache;
+  const cached = extensionNameRootCache.get(extensionName);
+  if (cached) {
+    return cached;
   }
-  extensionNameRootMapCache = getExtensionNameRootMapUncached();
-  return extensionNameRootMapCache;
+  const promise = findExtensionRootByNameUncached(extensionName);
+  extensionNameRootCache.set(extensionName, promise);
+  return promise;
 }
 
-async function getExtensionNameRootMapUncached(): Promise<Map<string, vscode.Uri>> {
-  const map = new Map<string, vscode.Uri>();
-  const roots = await enumerateExtensionRoots();
-  for (const root of roots) {
+function extensionDirNameFromName(extensionName: string): string {
+  const withoutVersion = extensionName.split('~')[0];
+  const parts = withoutVersion.split('/');
+  return parts[parts.length - 1] || withoutVersion;
+}
+
+async function findExtensionRootByNameUncached(
+  extensionName: string
+): Promise<vscode.Uri | undefined> {
+  const dirName = extensionDirNameFromName(extensionName);
+  const uris = await vscode.workspace.findFiles(
+    `**/extensions/${dirName}/extension.json`,
+    '**/{node_modules,.git,dist,out,.next,build,coverage,miniprogram_npm}/**'
+  );
+  for (const uri of uris) {
+    const root = vscode.Uri.file(path.dirname(uri.fsPath));
     const meta = await readExtensionJson(root);
-    if (meta?.name) {
-      map.set(meta.name, root);
-    }
-    if (meta?.extensionId) {
-      map.set(meta.extensionId, root);
+    if (meta?.name === extensionName || meta?.extensionId === extensionName) {
+      return root;
     }
   }
-  return map;
+  return undefined;
 }
 
 export async function findPageModuleContextsForExtension(

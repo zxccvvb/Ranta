@@ -40,7 +40,7 @@ tags: [ranta, tee, extension, widget, vue, static-widgets, provide, consume, ctx
 | 子键 | 行为 |
 |------|------|
 | **`default`** | 符号 → 本 extension **`index.js`** 的 **`static widgets`** 同名键 → `import` 落地文件；无 `static widgets` 时按约定找 `Main.vue` / `<Name>.vue` / `index.js`。 |
-| **`provide` / `consume`** | 本 extension **`widget.provide`** 含符号则解析 **widgets**；否则优先 page config `bindings` 与同页 provider，最后全局 **`widget.provide`**；多命中全列。 |
+| **`provide` / `consume`** | 本 extension **`widget.provide`** 含符号则解析 **widgets**；否则优先 page config `bindings.widget.<Name>` 与同页 provider。只有找不到 page config / 同页 provider 时才允许全局兜底；多命中全列。 |
 
 ## index.js
 
@@ -52,5 +52,5 @@ tags: [ranta, tee, extension, widget, vue, static-widgets, provide, consume, ctx
 
 - `src/extension.ts`：Vue `DefinitionProvider` 顺序（mapData → data 属性 → 标签）
 - `src/resolveDefinition.ts`：`resolveTeeWidgetDefinition`
-- `src/extensionJsonResolve.ts`：`resolveStaticListSymbol`（widget）
+- `src/extensionJsonResolve.ts`：`resolveStaticListSymbol`（widget，同样走 page config `bindings` 与同页 provider）
 - `src/widgetResolver.ts`：`resolvePageBindingWidgetTargets`、`findPageScopedExtensionsProvidingList`、`findExtensionsProvidingList('widget', …)`、`getVueTagNameAtPosition`、`tagToWidgetPascal`

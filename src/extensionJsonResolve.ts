@@ -15,7 +15,9 @@ import {
   findExtensionsProvidingDataKey,
   findExtensionsProvidingList,
   enumerateExtensionRoots,
+  findPageScopedExtensionsProvidingList,
   readExtensionJson,
+  resolvePageBindingWidgetTargets,
   resolveStaticOrConventionExport,
 } from './widgetResolver';
 
@@ -180,9 +182,28 @@ async function resolveStaticListSymbol(
     }
   }
 
-  const hits = await findExtensionsProvidingList(section, name);
   const out: vscode.Location[] = [];
   const seen = new Set<string>();
+  if (section === 'widget') {
+    const boundTargets = await resolvePageBindingWidgetTargets(extensionRoot, name);
+    for (const u of boundTargets) {
+      if (!seen.has(u.fsPath)) {
+        seen.add(u.fsPath);
+        out.push(new vscode.Location(u, new vscode.Range(0, 0, 0, 0)));
+      }
+    }
+  }
+
+  const pageScopedHits = await findPageScopedExtensionsProvidingList(
+    extensionRoot,
+    section,
+    name
+  );
+  const hits = pageScopedHits.length
+    ? pageScopedHits
+    : out.length
+      ? []
+      : await findExtensionsProvidingList(section, name);
   for (const h of hits) {
     const u = await resolveStaticOrConventionExport(h.extensionRoot, name, sk);
     if (u && !seen.has(u.fsPath)) {
