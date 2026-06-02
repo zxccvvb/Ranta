@@ -13,7 +13,7 @@ tags: [ranta, tee, extension, widget, vue, static-widgets, provide, consume, ctx
 ### 驼峰（Pascal）与短横线（kebab）——查找必看
 
 - 自定义标签名在模板里常见两种写法，**解析等价**：**PascalCase**（如 `<GoodsList />`）与 **kebab-case**（如 `<goods-list />`）。解析器会把标签统一成 **Pascal**（`tagToWidgetPascal`：`-` 分段首字母大写后拼接；无 `-` 时仅首字母大写）。
-- **`extension.json` 的 `widget.default` / `provide` / `consume` 符号**、**`index.js` 里 `static widgets` 的键** 一般为 **PascalCase**；从 kebab 标签反查时，先转成 Pascal 再对 JSON / static。
+- **`extension.json` 的 `widget.default` / `provide` / `consume` 符号**、**`index.ts` / `index.js` 里 `static widgets` 的键** 一般为 **PascalCase**；从 kebab 标签反查时，先转成 Pascal 再对 JSON / static。
 - **手工在仓库里搜 widget 时**：**同时**搜 **Pascal 名** 与 **kebab 名**（例如 `GoodsList` 与 `goods-list`），避免只搜一种而漏掉另一半模板或配置。
 
 - 光标落在 **自定义标签名**上（非内置、非 `van-*`，见 `shouldSkipTag` / `BUILTIN_TAGS`）。
@@ -23,7 +23,7 @@ tags: [ranta, tee, extension, widget, vue, static-widgets, provide, consume, ctx
   2. 否则若当前 extension **`component.provide`** 含该名 → 走 **component**（见 **ranta-tee-component**）。
   3. 否则查找包含当前 extension 的 `ranta-config/bizs/*.page.json`，先看当前 module 的 **`bindings.widget.<Name>`**，按 `moduleId + name` 解析目标 extension。
   4. 若无显式 binding，则只在**同一 page 的 modules** 内找 `widget.provide` / `component.provide`。
-  5. 同页仍无命中时，才全局枚举 `widget.provide` / `component.provide`；多命中全列。
+  5. 同页仍无命中或同页 provider 解析不到文件时，退回全局枚举 `widget.provide` / `component.provide`；多命中全列。
 - **多文件命中**：全部 `Location` 返回；命令 **Ranta: Go to Definition** 用 QuickPick。
 
 ## page config · `bindings`
@@ -39,14 +39,26 @@ tags: [ranta, tee, extension, widget, vue, static-widgets, provide, consume, ctx
 
 | 子键 | 行为 |
 |------|------|
-| **`default`** | 符号 → 本 extension **`index.js`** 的 **`static widgets`** 同名键 → `import` 落地文件；无 `static widgets` 时按约定找 `Main.vue` / `<Name>.vue` / `index.js`。 |
+| **`default`** | 符号 → 本 extension **`index.ts` / `index.js`** 的 **`static widgets`** 同名键 → `import` 落地文件；无 `static widgets` 时按约定找 `Main.vue` / `<Name>.vue` / 入口文件。 |
 | **`provide` / `consume`** | 本 extension **`widget.provide`** 含符号则解析 **widgets**；否则优先 page config `bindings.widget.<Name>` 与同页 provider。只有找不到 page config / 同页 provider 时才允许全局兜底；多命中全列。 |
 
-## index.js
+## index.ts / index.js
 
+- 入口文件 **`index.ts` 与 `index.js` 均支持**（优先读 `index.ts`）。不少 Tee extension（如 `@wsc-tee-trade/trade-buy-ump-block`）只有 `index.ts`，旧版插件只读 `index.js` 会导致 **同 extension 内 widget 无法跳转**。
 - **`static widgets = { ... }`** 与 **`import`** 解析见 `parseStaticBlockKeys`、`resolveNamedStaticExport`。
-- 部分 Tee extension 没有 `static widgets`，但有 `widget.default` 或页面 binding 指向 `Main` / `GoodsGroup`；此时按约定文件兜底：优先 `<Name>.vue/js/ts`、`widgets/<Name>.vue/js/ts`，最后在 `widget.default === <Name>` 且存在 `index.js` 时跳 `index.js`。
+- 部分 Tee extension 没有 `static widgets`，但有 `widget.default` 或页面 binding 指向 `Main` / `GoodsGroup`；此时按约定文件兜底：优先 `<Name>.vue/js/ts`、`widgets/<Name>.vue/js/ts`，最后在 `widget.default === <Name>` 且存在 `index.ts` / `index.js` 时跳入口文件。
 - `@` / `node_modules` 路径不解析。
+
+## 约定目录 · Pascal 与 kebab
+
+- `static widgets` 键为 **PascalCase**（如 `PrepayCardCellRow`），但 widget 源码目录常为 **kebab-case**（如 `widgets/prepay-card-cell-row/index.vue`）。
+- 解析器在约定路径阶段会 **同时尝试** `widgets/PrepayCardCellRow` 与 `widgets/prepay-card-cell-row`（`widgetPascalToKebab`）。
+- **典型案例**：`prepay-card-cell/index.vue` 中 `<prepay-card-cell-row />` 依赖本 extension 的 `widget.provide` + `index.ts` 的 `static widgets.PrepayCardCellRow` → `./widgets/prepay-card-cell-row/index.vue`。
+
+## 同 extension 内 consume 的子 widget
+
+- 父 widget（`PrepayCardCell`）模板里引用子 widget（`PrepayCardCellRow`）**无需手写 import**；运行时由 Ranta 注入，IDE 跳转靠 **`extension.json` 的 `widget.provide`** + **`index.ts` static widgets** + **约定 kebab 目录**。
+- 跨 extension 的 consume（如 `<recharge-list />` → `@retail-tee-prepaid/prepaid`）走 page config 同页 provider 或全局 `widget.provide` 搜索；同页 provider 解析失败时会 **退回全局 provider**。
 
 ## 相关源码
 

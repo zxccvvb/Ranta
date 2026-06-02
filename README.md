@@ -1,6 +1,6 @@
 # Ranta
 
-> 为 **Tee / Ranta** extension 提供 **「转到定义」**：在 `extension.json` 与 `.vue` / `.js` 之间跳转 **widget / component / data / process / lambda / event**，并与 `index.js` 的 `static widgets`、`static components`、`static lambdas` 及运行时 `ctx.data` / `ctx.event` / `process` / `ctx.lambdas` 写法对齐。  
+> 为 **Tee / Ranta** extension 提供 **「转到定义」**：在 `extension.json` 与 `.vue` / `.js` / `.ts` 之间跳转 **widget / component / data / process / lambda / event**，并与 **`index.ts` / `index.js`** 的 `static widgets`、`static components`、`static lambdas` 及运行时 `ctx.data` / `ctx.event` / `process` / `ctx.lambdas` 写法对齐。  
 > 另含 **`vueSfcMemberResolve`**：在 Tee 场景下补全 **Vue 单文件内 Options API 成员**（`this.xxx`、模板里对方法的引用等）的跳转，避免仅依赖编辑器内置 Vue/TS 语言服务时无法跳到本组件 `methods` / `computed` / `data` 等问题。
 
 ## Quick Start
@@ -8,7 +8,7 @@
 ### For VS Code / Cursor Users
 
 1. 本地安装：**Developer: Install Extension from Location…** → 选择本目录；或使用 **Install from VSIX…**。
-2. 打开包含 Tee extension 源码的工作区（需能访问 `extensions/<name>/extension.json` 与同目录 `index.js`）。
+2. 打开包含 Tee extension 源码的工作区（需能访问 `extensions/<name>/extension.json` 与同目录 `index.ts` 或 `index.js`）。
 3. **转到定义**（`F12`）或命令 **Ranta: Go to Definition**（`Alt+F12`）：
    - **`.vue`**：`mapData(this, [ 'a', ... ])` 数组内字段、`this.ctx.data.xxx` 的字段名 → 当前 extension 的 `extension.json` 中 **data** 键；**`this.ctx.event.listen` / `emit` 首参**、**`process.define` / `invoke` / `invokePipe` 首参**、**`this.ctx.lambdas.xxx` 方法名** → 见下表；自定义 **widget 标签** → 实现文件。**同一 `.vue` 内**：脚本里 **`this.成员名`**（不含 `this.$…`）、模板 **`{{ 成员 }}`** 或 **`@` / `:` / `v-*` 绑定值**中的标识符 → **`export default { … }` 的 Options API 定义**（`methods` / `computed` / `watch` / `data()` 返回对象 / 根级生命周期等），见下文 **Vue SFC 成员（vueSfcMemberResolve）**。
    - **`extensions/**` 下的 `.js` / `.ts`**：同上（event / process / lambda），由扩展单独注册，便于在 `index.js` 等文件中从 **`process.define('…')`** 跳回 **`extension.json`**。
@@ -25,7 +25,7 @@
 | **process** | **define** | **当前** extension：`process.define('名称', …)`（多种前缀）。全部匹配列出。 |
 | **process** | **invoke** | **非当前** extension：`process.define('名称', …)`；优先根据全局清单中 **`process.define`** 数组定位 extension，否则在除当前外的全部 extension 目录内代码搜索。全部匹配列出。 |
 
-**widget / component / lambda** 的 `provide` / `consume` / `default` 行为未变：本 extension `provide` 优先，否则全局枚举 `provide` 并解析 `index.js` 的 static 与 import。
+**widget / component / lambda** 的 `provide` / `consume` / `default` 行为未变：本 extension `provide` 优先，否则全局枚举 `provide` 并解析 **`index.ts` / `index.js`** 的 static 与 import；约定目录同时尝试 Pascal 与 kebab（如 `widgets/prepay-card-cell-row`）。
 
 ## 源码 → extension.json（反向）
 
@@ -69,7 +69,7 @@ Tee 仓库里的 `.vue` 往往不被默认 Vue 语言服务完整索引，**F12*
 ## Requirements
 
 - VS Code **≥ 1.74.0**（或兼容的 Cursor）。
-- 工作区包含 `extensions/<extension-name>/extension.json` 与入口 `index.js`（及常规 `import` 路径）。
+- 工作区包含 `extensions/<extension-name>/extension.json` 与入口 `index.ts` 或 `index.js`（及常规 `import` 路径）。
 
 ## Development
 

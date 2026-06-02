@@ -68,11 +68,12 @@ export async function resolveTeeWidgetDefinition(
   const pageScopedWidgetHits = extRoot
     ? await findPageScopedExtensionsProvidingList(extRoot, 'widget', namePascal)
     : [];
-  const widgetHits =
-    extRoot && (locations.length || pageScopedWidgetHits.length)
-      ? pageScopedWidgetHits
-      : await findExtensionsProvidingList('widget', namePascal);
-  for (const hit of widgetHits) {
+  const globalWidgetHits = await findExtensionsProvidingList('widget', namePascal);
+  const widgetHitSources = pageScopedWidgetHits.length
+    ? pageScopedWidgetHits
+    : globalWidgetHits;
+
+  for (const hit of widgetHitSources) {
     const target = await resolveStaticOrConventionExport(
       hit.extensionRoot,
       namePascal,
@@ -86,14 +87,36 @@ export async function resolveTeeWidgetDefinition(
     }
   }
 
+  // 同页 provider 声明了 widget 但未能解析到文件时，退回全局 provider 搜索
+  if (
+    locations.length === 0 &&
+    pageScopedWidgetHits.length > 0 &&
+    globalWidgetHits.length > 0
+  ) {
+    for (const hit of globalWidgetHits) {
+      const target = await resolveStaticOrConventionExport(
+        hit.extensionRoot,
+        namePascal,
+        'widgets'
+      );
+      if (target && !seen.has(target.fsPath)) {
+        seen.add(target.fsPath);
+        locations.push(
+          new vscode.Location(target, new vscode.Range(0, 0, 0, 0))
+        );
+      }
+    }
+  }
+
   const pageScopedComponentHits = extRoot
     ? await findPageScopedExtensionsProvidingList(extRoot, 'component', namePascal)
     : [];
-  const componentHits =
-    extRoot && (locations.length || pageScopedComponentHits.length)
-      ? pageScopedComponentHits
-      : await findExtensionsProvidingList('component', namePascal);
-  for (const hit of componentHits) {
+  const globalComponentHits = await findExtensionsProvidingList('component', namePascal);
+  const componentHitSources = pageScopedComponentHits.length
+    ? pageScopedComponentHits
+    : globalComponentHits;
+
+  for (const hit of componentHitSources) {
     const target = await resolveStaticOrConventionExport(
       hit.extensionRoot,
       namePascal,
@@ -104,6 +127,26 @@ export async function resolveTeeWidgetDefinition(
       locations.push(
         new vscode.Location(target, new vscode.Range(0, 0, 0, 0))
       );
+    }
+  }
+
+  if (
+    locations.length === 0 &&
+    pageScopedComponentHits.length > 0 &&
+    globalComponentHits.length > 0
+  ) {
+    for (const hit of globalComponentHits) {
+      const target = await resolveStaticOrConventionExport(
+        hit.extensionRoot,
+        namePascal,
+        'components'
+      );
+      if (target && !seen.has(target.fsPath)) {
+        seen.add(target.fsPath);
+        locations.push(
+          new vscode.Location(target, new vscode.Range(0, 0, 0, 0))
+        );
+      }
     }
   }
 

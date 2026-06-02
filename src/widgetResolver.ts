@@ -18,6 +18,14 @@ export function tagToWidgetPascal(tag: string): string {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
+/** static widgets 键 PrepayCardCellRow → 约定目录 prepay-card-cell-row */
+export function widgetPascalToKebab(name: string): string {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
+    .toLowerCase();
+}
+
 const BUILTIN_TAGS = new Set(
   [
     'template',
@@ -136,7 +144,27 @@ export async function readExtensionJson(
   }
 }
 
-/** 解析 index.js 中的 import */
+const EXTENSION_INDEX_FILES = ['index.ts', 'index.js'] as const;
+
+async function readExtensionIndexSource(
+  extensionRoot: vscode.Uri
+): Promise<{ source: string; indexUri: vscode.Uri } | undefined> {
+  for (const file of EXTENSION_INDEX_FILES) {
+    const indexUri = vscode.Uri.joinPath(extensionRoot, file);
+    try {
+      const buf = await vscode.workspace.fs.readFile(indexUri);
+      return {
+        source: Buffer.from(buf).toString('utf8'),
+        indexUri,
+      };
+    } catch {
+      // try next
+    }
+  }
+  return undefined;
+}
+
+/** 解析 extension 入口 index.ts / index.js 中的 import */
 export function parseIndexJsImports(source: string): Map<string, string> {
   const imports = new Map<string, string>();
   let m: RegExpExecArray | null;
@@ -218,7 +246,7 @@ export function parseStaticBlockKeys(
   return keys;
 }
 
-/** 解析 index.js 中 import 与 static widgets */
+/** 解析 extension 入口 index.ts / index.js 中 import 与 static widgets */
 export function parseIndexJsWidgets(source: string): {
   imports: Map<string, string>;
   widgetKeys: string[];
@@ -260,14 +288,11 @@ export async function resolveNamedStaticExport(
   exportName: string,
   kind: 'widgets' | 'components' | 'lambdas'
 ): Promise<vscode.Uri | undefined> {
-  const indexUri = vscode.Uri.joinPath(extensionRoot, 'index.js');
-  let buf: Uint8Array;
-  try {
-    buf = await vscode.workspace.fs.readFile(indexUri);
-  } catch {
+  const indexEntry = await readExtensionIndexSource(extensionRoot);
+  if (!indexEntry) {
     return undefined;
   }
-  const source = Buffer.from(buf).toString('utf8');
+  const { source } = indexEntry;
   const imports = parseIndexJsImports(source);
   const marker =
     kind === 'widgets'
@@ -307,11 +332,18 @@ async function resolveConventionExportToFile(
       : kind === 'components'
         ? ['', 'components']
         : ['', 'lambdas'];
+  const dirNames = [exportName];
+  const kebab = widgetPascalToKebab(exportName);
+  if (kebab !== exportName.toLowerCase()) {
+    dirNames.push(kebab);
+  }
   const candidates: string[] = [];
   for (const dir of dirs) {
-    const p = dir ? path.join(base, dir, exportName) : path.join(base, exportName);
-    candidates.push(p + '.vue', p + '.js', p + '.ts', path.join(p, 'index.vue'));
-    candidates.push(path.join(p, 'index.js'), path.join(p, 'index.ts'));
+    for (const dirName of dirNames) {
+      const p = dir ? path.join(base, dir, dirName) : path.join(base, dirName);
+      candidates.push(p + '.vue', p + '.js', p + '.ts', path.join(p, 'index.vue'));
+      candidates.push(path.join(p, 'index.js'), path.join(p, 'index.ts'));
+    }
   }
   for (const p of candidates) {
     const uri = vscode.Uri.file(p);
@@ -347,9 +379,9 @@ export async function resolveStaticOrConventionExport(
       : kind === 'components'
         ? meta?.component
         : meta?.lambda;
-  const indexUri = vscode.Uri.joinPath(extensionRoot, 'index.js');
-  if (block?.default === exportName && (await fileExists(indexUri))) {
-    return indexUri;
+  const indexEntry = await readExtensionIndexSource(extensionRoot);
+  if (block?.default === exportName && indexEntry) {
+    return indexEntry.indexUri;
   }
   return undefined;
 }
