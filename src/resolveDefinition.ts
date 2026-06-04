@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { resolveVueLocalComponentFromTag } from './vueSfcLocalComponentResolve';
 import {
   findExtensionRootAsync,
   findExtensionsProvidingList,
@@ -14,13 +15,16 @@ import {
  * 2. 页面 ranta-config 的 bindings.widget.X 命中 → 解析绑定 moduleId + name。
  * 3. 同一 page modules 内搜索 widget.provide / component.provide。
  * 4. 最后在工作区内搜索任意 extension.json 的 widget.provide 与 component.provide。
+ * 5. 仍无结果且光标在 .vue 模板标签上：本文件 components 注册 + import 相对路径；再试与当前 .vue 同目录的约定文件名（Pascal / kebab）。
  *
  * 说明：仅在 consume 中声明的组件（如 retail-goods-list 的 component.consume）实现位于其它 extension 的 provide，
  * 因此全局阶段必须同时查找 component.provide（不能只查 widget）。
  */
 export async function resolveTeeWidgetDefinition(
   fromFile: vscode.Uri,
-  namePascal: string
+  namePascal: string,
+  /** 模板中的原始标签名（kebab 或 Pascal），用于本地 import 兜底 */
+  tagRaw?: string
 ): Promise<vscode.Location[] | undefined> {
   const extRoot = await findExtensionRootAsync(fromFile);
   if (extRoot) {
@@ -147,6 +151,15 @@ export async function resolveTeeWidgetDefinition(
           new vscode.Location(target, new vscode.Range(0, 0, 0, 0))
         );
       }
+    }
+  }
+
+  if (locations.length === 0 && fromFile.fsPath.endsWith('.vue') && tagRaw) {
+    const localTarget = await resolveVueLocalComponentFromTag(fromFile, tagRaw);
+    if (localTarget) {
+      return [
+        new vscode.Location(localTarget, new vscode.Range(0, 0, 0, 0)),
+      ];
     }
   }
 

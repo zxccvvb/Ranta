@@ -25,7 +25,7 @@
 | **process** | **define** | **当前** extension：`process.define('名称', …)`（多种前缀）。全部匹配列出。 |
 | **process** | **invoke** | **非当前** extension：`process.define('名称', …)`；优先根据全局清单中 **`process.define`** 数组定位 extension，否则在除当前外的全部 extension 目录内代码搜索。全部匹配列出。 |
 
-**widget / component / lambda** 的 `provide` / `consume` / `default` 行为未变：本 extension `provide` 优先，否则全局枚举 `provide` 并解析 **`index.ts` / `index.js`** 的 static 与 import；约定目录同时尝试 Pascal 与 kebab（如 `widgets/prepay-card-cell-row`）。
+**widget / component / lambda** 的 `provide` / `consume` / `default` 行为未变：本 extension `provide` 优先，否则全局枚举 `provide` 并解析 **`index.ts` / `index.js`** 的 static 与 import；约定目录同时尝试 Pascal 与 kebab（如 `widgets/prepay-card-cell-row`）。**widget 链全部未命中**时，对 **`.vue` 模板标签** 再尝试：当前文件 **`components` + `import` 相对路径**，以及与该 **`.vue` 同目录** 的 `PrepayCardBalance.vue` / `prepay-card-balance` 等约定名（见 `vueSfcLocalComponentResolve.ts`）。
 
 ## 源码 → extension.json（反向）
 

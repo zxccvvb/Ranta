@@ -91,7 +91,11 @@ async function goToDefinitionAtCursor(
     const tag = getVueTagNameAtPosition(document, pos);
     if (tag && !shouldSkipTag(tag)) {
       const widgetPascal = tagToWidgetPascal(tag);
-      const locs = await resolveTeeWidgetDefinition(document.uri, widgetPascal);
+      const locs = await resolveTeeWidgetDefinition(
+        document.uri,
+        widgetPascal,
+        tag
+      );
       if (locs?.length) {
         await revealFirstOrPickLocations(
           locs,
@@ -162,7 +166,11 @@ export function activate(context: vscode.ExtensionContext): void {
         return [];
       }
       const widgetPascal = tagToWidgetPascal(tag);
-      const locs = await resolveTeeWidgetDefinition(document.uri, widgetPascal);
+      const locs = await resolveTeeWidgetDefinition(
+        document.uri,
+        widgetPascal,
+        tag
+      );
       return locs ?? [];
     },
   });
